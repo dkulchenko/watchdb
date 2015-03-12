@@ -25,6 +25,6 @@ _testmain.go
 
 sqlite-bin/
 watchdb
-test.sql
+*.sql
 bindata.go
 build/

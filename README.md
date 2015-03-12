@@ -55,7 +55,7 @@ Easy as that. Any changes made to mydb.sqlite will quickly show up in mydbcopy.s
 
 ### Options
 
-You can specify any option on the command line, or provide a configuration file (an example config is available at config/example.yml):
+You can specify any option on the command line, or provide a configuration file (an example config is available at conf/example.yml):
 
 ```
 watchdb watch --config-file=config.yml mydb.sqlite
