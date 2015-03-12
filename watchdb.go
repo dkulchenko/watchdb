@@ -158,7 +158,7 @@ func determineSqlitePath() string {
 		log.Debug("using sqlite3 in PATH: %s", sqlite3_path_path)
 		return sqlite3_path_path
 	} else {
-		log.Fatal("unable to find sqlite3 embedded or in $PATH")
+		log.Fatal("unable to find sqlite3 embedded or in PATH")
 	}
 
 	return ""
@@ -310,7 +310,7 @@ func watch(path string, options WatchConfig) {
 	db_md5 := getMD5(path)
 	done := make(chan bool)
 
-	needs_update := make(chan bool)
+	needs_update := make(chan bool, 1)
 
 	go func() {
 		for {
@@ -347,7 +347,12 @@ func watch(path string, options WatchConfig) {
 				}
 
 				if ev.IsModify() {
-					needs_update <- true
+					select {
+					case needs_update <- true:
+						// queued successfully
+					default:
+						// request is already in line, don't queue another one
+					}
 				}
 			case err := <-watcher.Error:
 				log.Error("error watching file: %s", err)
@@ -404,7 +409,7 @@ func sync(addr string, path string, options WatchConfig) {
 	}
 
 	done := make(chan bool)
-	download := make(chan bool)
+	download := make(chan bool, 1)
 
 	sql_backup_path := fmt.Sprintf("%s.new.sql", path)
 	backup_path := fmt.Sprintf("%s.old", path)
@@ -430,7 +435,12 @@ func sync(addr string, path string, options WatchConfig) {
 
 				go func() {
 					time.Sleep(time.Duration(5) * time.Second)
-					download <- true
+					select {
+					case download <- true:
+						// add a download to the queue
+					default:
+						// already a download in queue, don't add another one
+					}
 				}()
 
 				continue
@@ -577,7 +587,13 @@ func sync(addr string, path string, options WatchConfig) {
 			}
 
 			if strings.TrimSpace(string(body)) == "modified" {
-				download <- true
+				select {
+				case download <- true:
+					// add a download to the queue
+				default:
+					// already a download in queue, don't add another one
+				}
+
 			} else {
 				log.Warning("unknown body received from upstream: %s", body)
 				not_successful = true
