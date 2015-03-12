@@ -27,3 +27,4 @@ sqlite-bin/
 watchdb
 test.sql
 bindata.go
+build/

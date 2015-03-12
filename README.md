@@ -2,6 +2,8 @@
 
 A tool for easily replicating a SQLite database across a network.
 
+[![Release](https://img.shields.io/github/release/dkulchenko/watchdb.svg)](https://github.com/dkulchenko/watchdb/releases)
+
 ## Overview
 
 watchdb is a tool that enables quick setup of master-slave synchronization for 
