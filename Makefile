@@ -1,6 +1,6 @@
 .PHONY: build
 
-all: build
+all: clean build
 
 bootstrap:
 	@gox -build-toolchain
