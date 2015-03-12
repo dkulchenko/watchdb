@@ -463,7 +463,7 @@ func sync(addr string, path string, options WatchConfig) {
 			drop_sql_command := "PRAGMA writable_schema = 1; delete from sqlite_master where type in ('table', 'index', 'trigger'); PRAGMA writable_schema = 0; VACUUM; PRAGMA INTEGRITY_CHECK;"
 			drop_sqlite_out, err := exec.Command(sqlite_path, path, drop_sql_command).CombinedOutput()
 			if err != nil {
-				log.Error("unable to import drop existing DB prior to import, output: %s", string(drop_sqlite_out))
+				log.Error("unable to drop existing DB prior to import, output: %s", string(drop_sqlite_out))
 				continue
 			}
 
