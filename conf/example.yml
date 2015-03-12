@@ -18,3 +18,6 @@ skip_ssl_verify: false
 # auth key to require authenticated syncing requests
 # must be the same on both server and client
 auth_key: ""
+
+# notify clients no more often than this many milliseconds
+sync_interval: 1000

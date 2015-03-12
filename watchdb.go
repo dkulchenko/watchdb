@@ -42,6 +42,7 @@ Options:
   -c --config-file=<file> watchdb config file (optional)
   -a --bind-addr=<addr>   Address to bind to (default 0.0.0.0)
   -p --bind-port=<port>   Port to bind to (default 8144)
+  -i --sync-interval=<ms> Notify slaves at most every X milliseconds (default 1000)
   --no-backup             Don't create a backup file prior to sync
   -s --ssl                Use https for connecting to watcher (recommended)
   --ssl-key-file=<file>   SSL private key file to use for encrypted connections (will be generated if not provided)
@@ -309,6 +310,29 @@ func watch(path string, options WatchConfig) {
 	db_md5 := getMD5(path)
 	done := make(chan bool)
 
+	needs_update := make(chan bool)
+
+	go func() {
+		for {
+			<-needs_update
+
+			new_md5 := getMD5(path)
+			if db_md5 == new_md5 {
+				log.Debug("watched DB was modified, but checksum is the same, not notifying clients")
+			} else {
+				db_md5 = new_md5
+				if channels.Len() < 1 {
+					log.Info("watched DB was modified, but no clients to notify")
+				} else {
+					log.Info("watched DB was modified, notifying connected clients (%d)", channels.Len())
+					sendMessage("modified\n")
+				}
+			}
+
+			time.Sleep(time.Duration(options.SyncInterval) * time.Millisecond)
+		}
+	}()
+
 	go func() {
 		for {
 			select {
@@ -323,18 +347,7 @@ func watch(path string, options WatchConfig) {
 				}
 
 				if ev.IsModify() {
-					new_md5 := getMD5(path)
-					if db_md5 == new_md5 {
-						log.Debug("watched DB was modified, but checksum is the same, not notifying clients")
-					} else {
-						db_md5 = new_md5
-						if channels.Len() < 1 {
-							log.Info("watched DB was modified, but no clients to notify")
-						} else {
-							log.Info("watched DB was modified, notifying connected clients (%d)", channels.Len())
-							sendMessage("modified\n")
-						}
-					}
+					needs_update <- true
 				}
 			case err := <-watcher.Error:
 				log.Error("error watching file: %s", err)

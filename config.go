@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strconv"
 
 	yaml "gopkg.in/yaml.v2"
 )
@@ -24,6 +25,8 @@ type WatchConfig struct {
 
 	SyncFile   string `yaml:"sync_file,omitempty"`
 	RemoteConn string `yaml:"remote_conn,omitempty"`
+
+	SyncInterval int64 `yaml:"sync_interval,omitempty"`
 }
 
 func loadConfig(arguments map[string]interface{}) WatchConfig {
@@ -33,6 +36,7 @@ func loadConfig(arguments map[string]interface{}) WatchConfig {
 		NoBackup:      false,
 		UseSSL:        false,
 		SkipSSLVerify: false,
+		SyncInterval:  1000,
 	}
 
 	config_file, ok := arguments["--config-file"].(string)
@@ -80,6 +84,14 @@ func loadConfig(arguments map[string]interface{}) WatchConfig {
 
 	if authkey, ok := arguments["--auth-key"].(string); ok {
 		initialConfig.AuthKey = authkey
+	}
+
+	if syncinterval, ok := arguments["--sync-interval"].(string); ok {
+		interval, err := strconv.ParseInt(syncinterval, 10, 32)
+
+		if err == nil {
+			initialConfig.SyncInterval = interval
+		}
 	}
 
 	if syncfile, ok := arguments["<db.sql>"].(string); ok {
