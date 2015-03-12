@@ -37,12 +37,12 @@ func loadConfig(arguments map[string]interface{}) WatchConfig {
 	if ok {
 		config, err := ioutil.ReadFile(config_file)
 		if err != nil {
-			log.Fatal("error reading config file: %v", err)
+			log.Fatalf("error reading config file: %v", err)
 		}
 
 		err = yaml.Unmarshal(config, &initialConfig)
 		if err != nil {
-			log.Fatal("error reading config file: %v", err)
+			log.Fatalf("error reading config file: %v", err)
 		}
 
 		log.Notice("config file loaded")
