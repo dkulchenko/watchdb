@@ -18,7 +18,7 @@ application code), take a look at [rqlite](https://github.com/otoolep/rqlite).
 ## Features
 
 - Works on Linux, OS X, Windows
-- No dependencies other than 'sqlite3' in $PATH
+- No dependencies, just one binary
 - Replicates sqlite DB changes quickly across any number of nodes
 - No changes to application code required
 - Optional authentication and encryption supported
@@ -30,9 +30,10 @@ In the future:
 ## Installation
 
 [Precompiled binaries](https://github.com/dkulchenko/watchdb/releases) for supported 
-operating systems are available. You'll also need a working sqlite3 binary in $PATH.
+operating systems are available.
 
-Alternatively, run `go get github.com/dkulchenko/watchdb`.
+Alternatively, run `go get github.com/dkulchenko/watchdb`. You'll need a working sqlite3 
+binary in $PATH if you go this route. The precompiled binaries embed a copy of sqlite.
 
 ## Usage
 

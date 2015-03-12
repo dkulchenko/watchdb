@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"path"
 	"strings"
 	"time"
 )
@@ -97,16 +98,21 @@ func GenerateSelfSignedCerts() error {
 		log.Fatal("Failed to create certificate: %s", err)
 	}
 
-	certOut, err := os.Create("/tmp/watchdb-cert.pem")
+	homedir := os.Getenv("HOME")
+	watchdb_dir := path.Join(homedir, ".config", "watchdb")
+	watchdb_cert_path := path.Join(watchdb_dir, "watchdb-cert.pem")
+	watchdb_key_path := path.Join(watchdb_dir, "watchdb-key.pem")
+
+	certOut, err := os.Create(watchdb_cert_path)
 	if err != nil {
-		log.Fatal("failed to open /tmp/watchdb-cert.pem for writing: %s", err)
+		log.Fatalf("failed to open %s for writing: %s", watchdb_cert_path, err)
 	}
 	pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	certOut.Close()
 
-	keyOut, err := os.OpenFile("/tmp/watchdb-key.pem", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	keyOut, err := os.OpenFile(watchdb_key_path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		log.Fatal("failed to open /tmp/watchdb-key.pem for writing: %s", err)
+		log.Fatalf("failed to open %s for writing: %s", watchdb_key_path, err)
 	}
 	pem.Encode(keyOut, pemBlockForKey(priv))
 	keyOut.Close()

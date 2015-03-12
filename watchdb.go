@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -26,16 +27,7 @@ var log = logging.MustGetLogger("watchdb")
 var clients = make(chan chan string, 1)
 var channels = list.New()
 
-func exists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true, nil
-	}
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	return false, err
-}
+var sqlite_path string
 
 func main() {
 	usage := `watchdb
@@ -73,6 +65,7 @@ Options:
 	logformatter := logging.NewBackendFormatter(logbackend, format)
 	logging.SetBackend(logformatter)
 
+	sqlite_path = determineSqlitePath()
 	options := loadConfig(arguments)
 
 	log.Info("starting watchdb")
@@ -103,10 +96,88 @@ Options:
 	}
 }
 
+func createWatchDBDir() string {
+	homedir := os.Getenv("HOME")
+	watchdb_dir := path.Join(homedir, ".config", "watchdb")
+	watchdb_bin_dir := path.Join(watchdb_dir, "bin")
+
+	err := os.MkdirAll(watchdb_bin_dir, 0700)
+	if err != nil {
+		log.Fatalf("unable to create watchdb main directory: %s", err)
+	}
+
+	return watchdb_dir
+}
+
+func determineSqlitePath() string {
+	watchdb_dir := createWatchDBDir()
+
+	data, err := Asset("sqlite3")
+	if err == nil {
+		sqlite3_path := path.Join(watchdb_dir, "bin", "sqlite3")
+		err = ioutil.WriteFile(sqlite3_path, data, 0770)
+		if err != nil {
+			log.Fatalf("unable to expand sqlite3 into bin directory: %s", err)
+		}
+
+		log.Debug("using embedded sqlite3")
+		return sqlite3_path
+	}
+
+	data, err = Asset("sqlite3.exe")
+	if err == nil {
+		sqlite3_exe_path := path.Join(watchdb_dir, "bin", "sqlite3.exe")
+		err = ioutil.WriteFile(sqlite3_exe_path, data, 0770)
+		if err != nil {
+			log.Fatalf("unable to expand sqlite3.exe into bin directory: %s", err)
+		}
+
+		log.Debug("using embedded sqlite3.exe")
+		return sqlite3_exe_path
+	}
+
+	envpath := os.Getenv("PATH")
+	path_list := strings.Split(envpath, ":")
+
+	var sqlite3_path_path string
+	for _, path_entry := range path_list {
+		sqlite_exists, _ := exists(path.Join(path_entry, "sqlite3"))
+		sqlite_exe_exists, _ := exists(path.Join(path_entry, "sqlite3.exe"))
+
+		if sqlite_exists {
+			sqlite3_path_path = path.Join(path_entry, "sqlite3")
+			break
+		} else if sqlite_exe_exists {
+			sqlite3_path_path = path.Join(path_entry, "sqlite3.exe")
+			break
+		}
+	}
+
+	if sqlite3_path_path != "" {
+		log.Debug("using sqlite3 in PATH: %s", sqlite3_path_path)
+		return sqlite3_path_path
+	} else {
+		log.Fatal("unable to find sqlite3 embedded or in $PATH")
+	}
+
+	return ""
+}
+
 func sendMessage(message string) {
 	for e := channels.Front(); e != nil; e = e.Next() {
 		e.Value.(chan string) <- message
 	}
+}
+
+func exists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func listen(addr string, path string, options WatchConfig) {
@@ -136,7 +207,7 @@ func listen(addr string, path string, options WatchConfig) {
 
 		log.Debug("sending DB to " + r.RemoteAddr)
 
-		out, err := exec.Command("sqlite3", path, ".dump").Output()
+		out, err := exec.Command(sqlite_path, path, ".dump").Output()
 		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -377,14 +448,14 @@ func sync(addr string, path string, options WatchConfig) {
 			}
 
 			drop_sql_command := "PRAGMA writable_schema = 1; delete from sqlite_master where type in ('table', 'index', 'trigger'); PRAGMA writable_schema = 0; VACUUM; PRAGMA INTEGRITY_CHECK;"
-			drop_sqlite_out, err := exec.Command("sqlite3", path, drop_sql_command).CombinedOutput()
+			drop_sqlite_out, err := exec.Command(sqlite_path, path, drop_sql_command).CombinedOutput()
 			if err != nil {
 				log.Error("unable to import drop existing DB prior to import, output: %s", string(drop_sqlite_out))
 				continue
 			}
 
 			sql_command := fmt.Sprintf(".read %s", sql_backup_path)
-			sqlite_out, err := exec.Command("sqlite3", path, sql_command).CombinedOutput()
+			sqlite_out, err := exec.Command(sqlite_path, path, sql_command).CombinedOutput()
 			if err != nil {
 				log.Error("unable to import newly downloaded DB from upstream, output: %s", string(sqlite_out))
 				continue
@@ -442,8 +513,28 @@ func sync(addr string, path string, options WatchConfig) {
 			resp, err := client.Do(req)
 
 			if err != nil {
-				log.Warning("unable to watch for upstream updates: %s", err)
 				not_successful = true
+
+				if strings.Contains(err.Error(), "malformed HTTP response") {
+					log.Error("it looks like the upstream server is using SSL, did you forget to specify --ssl?")
+
+					os.Exit(1)
+				}
+
+				if strings.Contains(err.Error(), "certificate signed by unknown authority") {
+					log.Error("encountered a certificate error when trying to verify SSL, you may want to use --ssl-skip-verify if this is a self-signed certificate")
+
+					os.Exit(1)
+				}
+
+				if strings.Contains(err.Error(), "oversized record received") && options.UseSSL {
+					log.Error("it looks like you're trying to connect through SSL, but the server isn't set up to use SSL, try removing --ssl or properly setting it up on the server")
+
+					os.Exit(1)
+				}
+
+				log.Warning("unable to watch for upstream updates: %s", err)
+
 				time.Sleep(time.Duration(5) * time.Second)
 				continue
 			}

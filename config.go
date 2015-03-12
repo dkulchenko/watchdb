@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/dkulchenko/watchdb/ssl"
 	"io/ioutil"
+	"os"
+	"path"
 
 	yaml "gopkg.in/yaml.v2"
 )
@@ -93,8 +95,11 @@ func loadConfig(arguments map[string]interface{}) WatchConfig {
 	if watch && initialConfig.UseSSL && (initialConfig.SSLKeyFile == "" || initialConfig.SSLCertFile == "") {
 		log.Warning("ssl cert file and key file weren't specified, automatically generating")
 		ssl.GenerateSelfSignedCerts()
-		initialConfig.SSLKeyFile = "/tmp/watchdb-key.pem"
-		initialConfig.SSLCertFile = "/tmp/watchdb-cert.pem"
+
+		homedir := os.Getenv("HOME")
+		watchdb_dir := path.Join(homedir, ".config", "watchdb")
+		initialConfig.SSLCertFile = path.Join(watchdb_dir, "watchdb-cert.pem")
+		initialConfig.SSLKeyFile = path.Join(watchdb_dir, "watchdb-key.pem")
 	}
 
 	return initialConfig
