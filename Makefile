@@ -24,11 +24,15 @@ clean:
 	@cp bindata.go.tmpl bindata.go
 
 fullclean: clean
-	@rm -f build/*
+	@rm -fr build/*
 
 create-zip:
-	@mv watchdb_$(build_os)$(dest_ext) build/watchdb$(dest_ext)
-	@cd build && zip watchdb_$(build_os).zip watchdb$(dest_ext) && rm watchdb$(dest_ext)
+	@mkdir -p build/watchdb
+	@mv watchdb_$(build_os)$(dest_ext) build/watchdb/watchdb$(dest_ext)
+	@cp README.md build/watchdb/README
+	@cp conf/example.yml build/watchdb/example-config.yml
+	@cd build && zip -r watchdb_$(build_os).zip watchdb
+	@rm -r build/watchdb
 
 build-linux: clean
 	@go-bindata -prefix sqlite-bin/linux/ sqlite-bin/linux/
@@ -49,4 +53,4 @@ build-windows: clean
 	@$(MAKE) create-zip build_os=windows_386 dest_ext=.exe
 	@$(MAKE) create-zip build_os=windows_amd64 dest_ext=.exe
 
-build-all: build-linux build-windows build-osx clean
+build-all: fullclean build-linux build-windows build-osx clean
