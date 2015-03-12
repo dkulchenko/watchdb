@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"container/list"
 	"crypto/md5"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -43,17 +44,24 @@ Usage:
   watchdb watch [options] <db.sql>
   watchdb sync [options] <remote> <db.sql>
 
-Options
-  -h --help    Show this screen
-  --version    Show version
-  --bind-addr  Address to bind to (default 0.0.0.0)
-  --bind-port  Port to bind to (default 8144)
-  --no-backup  Don't create a backup file prior to sync
+Options:
+  -h --help               Show this screen
+  -v --version            Show version
+  -c --config-file=<file> watchdb config file (optional)
+  -a --bind-addr=<addr>   Address to bind to (default 0.0.0.0)
+  -p --bind-port=<port>   Port to bind to (default 8144)
+  --no-backup             Don't create a backup file prior to sync
+  -s --ssl                Use https for connecting to watcher (recommended)
+  --ssl-key-file=<file>   SSL private key file to use for encrypted connections (will be generated if not provided)
+  --ssl-cert-file=<file>  SSL certificate file to use for encrypted connections (will be generated if not provided)
+  --ssl-skip-verify       Don't verify SSL certificate (required if self-signed or auto-generated)
+  --auth-key=<auth-key>   Auth key to be sent (or required) with all connections
 `
 
 	arguments, err := docopt.Parse(usage, nil, true, "0.1", false)
 	if err != nil {
-		fmt.Println(arguments)
+		fmt.Println(err)
+		fmt.Println(usage)
 		return
 	}
 
@@ -65,10 +73,12 @@ Options
 	logformatter := logging.NewBackendFormatter(logbackend, format)
 	logging.SetBackend(logformatter)
 
+	options := loadConfig(arguments)
+
 	log.Info("starting watchdb")
 
 	if arguments["watch"].(bool) {
-		path := arguments["<db.sql>"].(string)
+		path := options.SyncFile
 		path_exists, err := exists(path)
 
 		if err != nil || !path_exists {
@@ -76,20 +86,10 @@ Options
 			return
 		}
 
-		bind_addr := "0.0.0.0"
-		if _, ok := arguments["bind-addr"].(string); ok {
-			bind_addr = arguments["bind-addr"].(string)
-		}
+		addr := fmt.Sprintf("%s:%s", options.BindAddr, options.BindPort)
 
-		bind_port := "8144"
-		if _, ok := arguments["bind-port"].(string); ok {
-			bind_port = arguments["bind-port"].(string)
-		}
-
-		addr := fmt.Sprintf("%s:%s", bind_addr, bind_port)
-
-		go listen(addr, path)
-		watch(path, arguments)
+		go listen(addr, path, options)
+		watch(path, options)
 	} else if arguments["sync"].(bool) {
 		path, ok := arguments["<db.sql>"].(string)
 
@@ -97,9 +97,9 @@ Options
 			path = "synced.sql"
 		}
 
-		connect_addr := arguments["<remote>"].(string)
+		connect_addr := options.RemoteConn
 
-		sync(connect_addr, path, arguments)
+		sync(connect_addr, path, options)
 	}
 }
 
@@ -109,7 +109,7 @@ func sendMessage(message string) {
 	}
 }
 
-func listen(addr string, path string) {
+func listen(addr string, path string, options WatchConfig) {
 	removeclients := make(chan *list.Element, 1)
 	listelement := make(chan *list.Element, 1)
 
@@ -125,6 +125,15 @@ func listen(addr string, path string) {
 	}()
 
 	http.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		if options.AuthKey != "" {
+			provided_key := r.Header.Get("Authorization")
+			if provided_key != options.AuthKey {
+				log.Warning("rejected connection from %s, incorrect auth key provided: '%s'", r.RemoteAddr, provided_key)
+				http.Error(w, "authorization required", 401)
+				return
+			}
+		}
+
 		log.Debug("sending DB to " + r.RemoteAddr)
 
 		out, err := exec.Command("sqlite3", path, ".dump").Output()
@@ -161,6 +170,15 @@ func listen(addr string, path string) {
 	})
 
 	http.HandleFunc("/watch", func(w http.ResponseWriter, r *http.Request) {
+		if options.AuthKey != "" {
+			provided_key := r.Header.Get("Authorization")
+			if provided_key != options.AuthKey {
+				log.Warning("rejected connection from %s, incorrect auth key provided: '%s'", r.RemoteAddr, provided_key)
+				http.Error(w, "authorization required", 401)
+				return
+			}
+		}
+
 		log.Debug("remote syncer " + r.RemoteAddr + " connected")
 
 		notify := w.(http.CloseNotifier).CloseNotify()
@@ -181,8 +199,13 @@ func listen(addr string, path string) {
 		}
 	})
 
-	log.Notice("listening on " + addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	if options.UseSSL {
+		log.Notice("listening for SSL connections on " + addr)
+		log.Fatal(http.ListenAndServeTLS(addr, options.SSLCertFile, options.SSLKeyFile, nil))
+	} else {
+		log.Notice("listening on " + addr)
+		log.Fatal(http.ListenAndServe(addr, nil))
+	}
 }
 
 func getMD5(path string) string {
@@ -206,7 +229,7 @@ func getMD5(path string) string {
 	return string(h.Sum([]byte{}))
 }
 
-func watch(path string, options map[string]interface{}) {
+func watch(path string, options WatchConfig) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
@@ -284,9 +307,17 @@ func copyFileContents(src, dst string) (err error) {
 	return
 }
 
-func sync(addr string, path string, options map[string]interface{}) {
-	poll_url := fmt.Sprintf("http://%s/watch", addr)
-	download_url := fmt.Sprintf("http://%s/latest", addr)
+func sync(addr string, path string, options WatchConfig) {
+	var poll_url string
+	var download_url string
+
+	if options.UseSSL {
+		poll_url = fmt.Sprintf("https://%s/watch", addr)
+		download_url = fmt.Sprintf("https://%s/latest", addr)
+	} else {
+		poll_url = fmt.Sprintf("http://%s/watch", addr)
+		download_url = fmt.Sprintf("http://%s/latest", addr)
+	}
 
 	done := make(chan bool)
 	download := make(chan bool)
@@ -294,17 +325,27 @@ func sync(addr string, path string, options map[string]interface{}) {
 	sql_backup_path := fmt.Sprintf("%s.new.sql", path)
 	backup_path := fmt.Sprintf("%s.old", path)
 
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: options.SkipSSLVerify},
+	}
+	client := &http.Client{Transport: tr}
+
 	go func() {
 		for {
 			<-download
 
-			resp, err := http.Get(download_url)
+			req, err := http.NewRequest("GET", download_url, nil)
+			if options.AuthKey != "" {
+				req.Header.Add("Authorization", options.AuthKey)
+			}
+
+			resp, err := client.Do(req)
 
 			if err != nil {
-				log.Warning("unable to download latest DB from upstream, retrying in 2s: %s", err)
+				log.Warning("unable to download latest DB from upstream, retrying in 5s: %s", err)
 
 				go func() {
-					time.Sleep(time.Duration(2) * time.Second)
+					time.Sleep(time.Duration(5) * time.Second)
 					download <- true
 				}()
 
@@ -362,23 +403,48 @@ func sync(addr string, path string, options map[string]interface{}) {
 	}()
 
 	go func() {
+		initial_sync_done := false
+
 		for {
 			not_successful := false
 
 			go func() {
-				time.Sleep(time.Duration(500) * time.Millisecond)
+				time.Sleep(time.Duration(400) * time.Millisecond)
 
 				if !not_successful {
 					log.Notice("connected to upstream")
+
+					if !initial_sync_done {
+						initial_sync_done = true
+
+						if path_exists, _ := exists(path); path_exists && !options.NoBackup {
+							orig_backup_path := fmt.Sprintf("%s.orig", path)
+							err := copyFileContents(path, orig_backup_path)
+							if err != nil {
+								log.Fatal("unable to back up current sqlite database: %s", err)
+							}
+
+							log.Notice("syncing upstream DB to %s", path)
+							log.Info("if that's not what you meant to do, we've saved a backup at %s", orig_backup_path)
+						}
+
+						log.Notice("running initial sync")
+						download <- true
+					}
 				}
 			}()
 
-			resp, err := http.Get(poll_url)
+			req, err := http.NewRequest("GET", poll_url, nil)
+			if options.AuthKey != "" {
+				req.Header.Add("Authorization", options.AuthKey)
+			}
+
+			resp, err := client.Do(req)
 
 			if err != nil {
 				log.Warning("unable to watch for upstream updates: %s", err)
 				not_successful = true
-				time.Sleep(time.Duration(2) * time.Second)
+				time.Sleep(time.Duration(5) * time.Second)
 				continue
 			}
 
@@ -388,33 +454,34 @@ func sync(addr string, path string, options map[string]interface{}) {
 
 			if err != nil {
 				log.Warning("unable to parse upstream body: %s", err)
-				time.Sleep(time.Duration(2) * time.Second)
+				not_successful = true
+				time.Sleep(time.Duration(5) * time.Second)
 				continue
+			}
+
+			if resp.StatusCode == 401 {
+				if options.AuthKey == "" {
+					log.Error("upstream requires an authentication key to connect, provide via --auth-key")
+				} else {
+					log.Error("authentication key '%s' rejected by server, make sure it was entered correctly", options.AuthKey)
+				}
+
+				done <- true
+				not_successful = true
+
+				return
 			}
 
 			if strings.TrimSpace(string(body)) == "modified" {
 				download <- true
 			} else {
 				log.Warning("unknown body received from upstream: %s", body)
+				not_successful = true
+				time.Sleep(time.Duration(5) * time.Second)
+				continue
 			}
 		}
 	}()
-
-	log.Notice("running initial sync")
-
-	if path_exists, _ := exists(path); path_exists {
-		orig_backup_path := fmt.Sprintf("%s.orig", path)
-		err := copyFileContents(path, orig_backup_path)
-		if err != nil {
-			log.Error("unable to back up current sqlite database: %s", err)
-			return
-		}
-
-		log.Notice("replacing contents of %s with upstream DB", path)
-		log.Info("if that's not what you meant to do, we've saved a backup at %s", orig_backup_path)
-	}
-
-	download <- true
 
 	<-done
 }

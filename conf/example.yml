@@ -1,0 +1,20 @@
+---
+# what address and port to listen for sync requests on
+bind_addr: 0.0.0.0
+bind_port: 8144
+
+# skip backing up the sync file on startup
+no_backup: false
+
+# use an encrypted connection to keep the sync secure
+# you may provide a SSL cert file/key file, or a self-signed one will be generated for you
+use_ssl: false
+ssl_key_file: ""
+ssl_cert_file: ""
+
+# if you use a self-signed SSL cert (or if you're letting watchdb generate a cert for you), set this to true
+skip_ssl_verify: false
+
+# auth key to require authenticated syncing requests
+# must be the same on both server and client
+auth_key: ""
